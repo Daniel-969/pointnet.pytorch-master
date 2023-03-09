@@ -13,8 +13,10 @@ extern "C"{
 
 void render_ball(int h,int w,unsigned char * show,int n,int * xyzs,float * c0,float * c1,float * c2,int r){
 	r=max(r,1);
+	//定义了容量为h*w，初始值为-2100000000的vector
 	vector<int> depth(h*w,-2100000000);
 	vector<PointInfo> pattern;
+	//将以r为半径球中所有整数点放入容器pattern中
 	for (int dx=-r;dx<=r;dx++)
 		for (int dy=-r;dy<=r;dy++)
 			if (dx*dx+dy*dy<r*r){
@@ -28,6 +30,7 @@ void render_ball(int h,int w,unsigned char * show,int n,int * xyzs,float * c0,fl
 				pinfo.b=dz/r;
 				pattern.push_back(pinfo);
 			}
+	//找到xyzs中z的最小值和最大值
 	double zmin=0,zmax=0;
 	for (int i=0;i<n;i++){
 		if (i==0){
