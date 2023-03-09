@@ -19,7 +19,8 @@ cv2.namedWindow('show3d')
 cv2.moveWindow('show3d', 0, 0)
 cv2.setMouseCallback('show3d', onmouse)
 
-dll = np.ctypeslib.load_library('render_balls_so', '.')
+# dll = np.ctypeslib.load_library('render_balls_so', '.')
+dll = ct.cdll.LoadLibrary('render_balls.dll')
 
 def showpoints(xyz,c_gt=None, c_pred = None, waittime=0, 
     showrot=False, magnifyBlue=0, freezerot=False, background=(0,0,0), 
