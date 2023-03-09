@@ -8,7 +8,7 @@ It is tested with pytorch-1.0.
 ```
 git clone https://github.com/fxia22/pointnet.pytorch
 cd pointnet.pytorch
-pip install -e .
+pip install -e . # 安装依赖包
 ```
 
 Download and build visualization tool
