@@ -29,7 +29,7 @@ def get_segmentation_classes(root):
         for fn in fns:
             token = (os.path.splitext(os.path.basename(fn))[0])
             meta[item].append((os.path.join(dir_point, token + '.pts'), os.path.join(dir_seg, token + '.seg')))
-    
+
     with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), '../misc/num_seg_classes.txt'), 'w') as f:
         for item in cat:
             datapath = []
@@ -134,20 +134,25 @@ class ShapeNetDataset(data.Dataset):
 
     # 该方法的实例对象可通过索引取值，自动调用该方法
     def __getitem__(self, index):
-        fn = self.datapath[index]
-        cls = self.classes[self.datapath[index][0]]
-        point_set = np.loadtxt(fn[1]).astype(np.float32)
-        seg = np.loadtxt(fn[2]).astype(np.int64)
+        fn = self.datapath[index]  #  获取类别、点云路径、分割标签路径元组
+        cls = self.classes[self.datapath[index][0]]  # 获取数字编码的类别标签
+        point_set = np.loadtxt(fn[1]).astype(np.float32)  # 读取pts点云
+        seg = np.loadtxt(fn[2]).astype(np.int64)  # 读取分割标签
         #print(point_set.shape, seg.shape)
 
+        # 重新采样到self.npoints个点
         choice = np.random.choice(len(seg), self.npoints, replace=True)
         #resample
         point_set = point_set[choice, :]
 
+        # 去中心化
         point_set = point_set - np.expand_dims(np.mean(point_set, axis = 0), 0) # center
+        # 计算到原点的最远距离
         dist = np.max(np.sqrt(np.sum(point_set ** 2, axis = 1)),0)
+        # 归一化
         point_set = point_set / dist #scale
 
+        # 默认False  开启旋转任意角度并加上一个bias,增强数据的抗干扰能力
         if self.data_augmentation:
             theta = np.random.uniform(0,np.pi*2)
             rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
@@ -155,9 +160,9 @@ class ShapeNetDataset(data.Dataset):
             point_set += np.random.normal(0, 0.02, size=point_set.shape) # random jitter
 
         seg = seg[choice]
-        point_set = torch.from_numpy(point_set)
+        point_set = torch.from_numpy(point_set) #转换数据格式
         seg = torch.from_numpy(seg)
-        cls = torch.from_numpy(np.array([cls]).astype(np.int64))
+        cls = torch.from_numpy(np.array([cls]).astype(np.int64))  #cls为对应的代号,比如Airplane对应0
 
         if self.classification:
             return point_set, cls
@@ -217,6 +222,7 @@ class ModelNetDataset(data.Dataset):
 
     def __len__(self):
         return len(self.fns)
+
 
 if __name__ == '__main__':
     dataset = sys.argv[1]
