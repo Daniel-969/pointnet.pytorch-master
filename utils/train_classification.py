@@ -41,7 +41,7 @@ parser.add_argument('--model', type=str, default='', help='model path')
 # 这里，数据集的路径必须手动设置
 parser.add_argument('--dataset', type=str, required=True, help="dataset path", default='.\modelnet40_normal_resampled')
 # 数据集类型
-parser.add_argument('--dataset_type', type=str, default='shapenet', help="dataset type shapenet|modelnet40")
+parser.add_argument('--dataset_type', type=str, default='modelnet40', help="dataset type shapenet|modelnet40")
 # 是否进行特征变换
 parser.add_argument('--feature_transform', action='store_true', help="use feature transform")
 
@@ -59,18 +59,20 @@ random.seed(opt.manualSeed)
 # 设置一个用于生成随机数的种子，返回的是一个torch.Generator对象
 torch.manual_seed(opt.manualSeed)
 
+# 调用pointnet.pytorch/pointnet/dataset.py中的ShapeNetDataset类，创建针对shapenet数据集的类对象
 if opt.dataset_type == 'shapenet':
-    dataset = ShapeNetDataset(
+    dataset = ShapeNetDataset(  # 训练集
         root=opt.dataset,
-        classification=True,
+        classification=True,  # 打开分类的选项
         npoints=opt.num_points)
 
-    test_dataset = ShapeNetDataset(
+    test_dataset = ShapeNetDataset(  # 测试集
         root=opt.dataset,
         classification=True,
-        split='test',
+        split='test',  # 标记为测试
         npoints=opt.num_points,
         data_augmentation=False)
+# 调用pointnet.pytorch/pointnet/dataset.py中的ModelNetDataset类，创建针对modelnet40数据集的类对象
 elif opt.dataset_type == 'modelnet40':
     dataset = ModelNetDataset(
         root=opt.dataset,
@@ -85,77 +87,93 @@ elif opt.dataset_type == 'modelnet40':
 else:
     exit('wrong dataset type')
 
-
+# 用来把训练数据分成多个小组，此函数每次抛出一组数据。直至把所有的数据都抛出。就是做一个数据的初始化
 dataloader = torch.utils.data.DataLoader(
     dataset,
+    batch_size=opt.batchSize,
+    shuffle=True,  # 将数据集的顺序打乱
+    num_workers=int(opt.workers))
+
+testdataloader = torch.utils.data.DataLoader(
+    test_dataset,
     batch_size=opt.batchSize,
     shuffle=True,
     num_workers=int(opt.workers))
 
-testdataloader = torch.utils.data.DataLoader(
-        test_dataset,
-        batch_size=opt.batchSize,
-        shuffle=True,
-        num_workers=int(opt.workers))
-
-print(len(dataset), len(test_dataset))
+print(len(dataset), len(test_dataset))  # 12137 2874
 num_classes = len(dataset.classes)
-print('classes', num_classes)
+print('classes', num_classes)  # classes 16
 
+# 创建文件夹，若无法创建，进行异常检测
 try:
     os.makedirs(opt.outf)
 except OSError:
     pass
 
+# 调用model.py的PointNetCls定义分类函数
 classifier = PointNetCls(k=num_classes, feature_transform=opt.feature_transform)
 
+# 如果有预训练模型，将预训练模型加载
 if opt.model != '':
     classifier.load_state_dict(torch.load(opt.model))
 
-
+# 优化器：adam-Adaptive Moment Estimation(自适应矩估计)，利用梯度的一阶矩和二阶矩动态调整每个参数的学习率
+# betas：用于计算梯度一阶矩和二阶矩的系数
 optimizer = optim.Adam(classifier.parameters(), lr=0.001, betas=(0.9, 0.999))
+# 学习率调整：每个step_size次epoch后，学习率x0.5
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
+# 将所有的模型参数移到GPU中
 classifier.cuda()
 
+# 计算batch的数量
 num_batch = len(dataset) / opt.batchSize
 
+# 开始一趟一趟的训练
 for epoch in range(opt.nepoch):
     scheduler.step()
+    # 将一个可遍历对象组合为一个索引序列，同时列出数据和数据下标,(0, seq[0])...
+    # __init__(self, iterable, start=0)，参数为可遍历对象及起始位置
     for i, data in enumerate(dataloader, 0):
-        points, target = data
-        target = target[:, 0]
-        points = points.transpose(2, 1)
-        points, target = points.cuda(), target.cuda()
-        optimizer.zero_grad()
-        classifier = classifier.train()
-        pred, trans, trans_feat = classifier(points)
+        points, target = data  # 读取待训练对象点云与标签
+        target = target[:, 0]  # 取所有行的第0列
+        points = points.transpose(2, 1)  # 改变点云的维度
+        points, target = points.cuda(), target.cuda()  # tensor转到cuda上
+        optimizer.zero_grad()  # 梯度清除，避免backward时梯度累加
+        classifier = classifier.train()# 训练模式，使能BN和dropout
+        pred, trans, trans_feat = classifier(points)  # 网络结果预测输出
+        # 损失函数：负log似然损失，在分类网络中使用了log_softmax，二者结合其实就是交叉熵损失函数
         loss = F.nll_loss(pred, target)
+        # 对feature_transform中64X64的变换矩阵做正则化，满足AA^T=I
         if opt.feature_transform:
             loss += feature_transform_regularizer(trans_feat) * 0.001
-        loss.backward()
-        optimizer.step()
-        pred_choice = pred.data.max(1)[1]
-        correct = pred_choice.eq(target.data).cpu().sum()
-        print('[%d: %d/%d] train loss: %f accuracy: %f' % (epoch, i, num_batch, loss.item(), correct.item() / float(opt.batchSize)))
+        loss.backward() # loss反向传播
+        optimizer.step() # 梯度下降，参数优化
+        pred_choice = pred.data.max(1)[1] # max(1)返回每一行中的最大值及索引,[1]取出索引（代表着类别）
+        correct = pred_choice.eq(target.data).cpu().sum() # 判断和target是否匹配，并计算匹配的数量
+        print('[%d: %d/%d] train loss: %f accuracy: %f' % (
+            epoch, i, num_batch, loss.item(), correct.item() / float(opt.batchSize)))
 
+        # 每10次batch之后，进行一次测试
         if i % 10 == 0:
             j, data = next(enumerate(testdataloader, 0))
             points, target = data
             target = target[:, 0]
             points = points.transpose(2, 1)
             points, target = points.cuda(), target.cuda()
-            classifier = classifier.eval()
+            classifier = classifier.eval()  # 测试模式，固定住BN和dropout
             pred, _, _ = classifier(points)
             loss = F.nll_loss(pred, target)
             pred_choice = pred.data.max(1)[1]
             correct = pred_choice.eq(target.data).cpu().sum()
-            print('[%d: %d/%d] %s loss: %f accuracy: %f' % (epoch, i, num_batch, blue('test'), loss.item(), correct.item()/float(opt.batchSize)))
-
+            print('[%d: %d/%d] %s loss: %f accuracy: %f' % (
+                epoch, i, num_batch, blue('test'), loss.item(), correct.item() / float(opt.batchSize)))
+    # 保存权重文件在cls/cls_model_1.pth
     torch.save(classifier.state_dict(), '%s/cls_model_%d.pth' % (opt.outf, epoch))
 
+# 在测试集上验证模型的精度
 total_correct = 0
 total_testset = 0
-for i,data in tqdm(enumerate(testdataloader, 0)):
+for i, data in tqdm(enumerate(testdataloader, 0)):
     points, target = data
     target = target[:, 0]
     points = points.transpose(2, 1)

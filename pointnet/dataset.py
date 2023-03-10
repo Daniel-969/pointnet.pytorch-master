@@ -5,8 +5,10 @@ import os.path
 import torch
 import numpy as np
 import sys
-from tqdm import tqdm 
+from tqdm import tqdm
+# 用于存储和转换数据格式的语法
 import json
+# 处理点云的文件，自行安装
 from plyfile import PlyData, PlyElement
 
 def get_segmentation_classes(root):
@@ -53,6 +55,7 @@ def gen_modelnet_id(root):
         for i in range(len(classes)):
             f.write('{}\t{}\n'.format(classes[i], i))
 
+
 class ShapeNetDataset(data.Dataset):
     def __init__(self,
                  root,
@@ -63,49 +66,73 @@ class ShapeNetDataset(data.Dataset):
                  data_augmentation=True):
         self.npoints = npoints
         self.root = root
-        self.catfile = os.path.join(self.root, 'synsetoffset2category.txt')
+        self.catfile = os.path.join(self.root, 'synsetoffset2category.txt')  # 路径拼接 这个参数是在root路径中synsetoffset2category.txt的路径
         self.cat = {}
-        self.data_augmentation = data_augmentation
+        self.data_augmentation = data_augmentation  # 数据扩充
         self.classification = classification
         self.seg_classes = {}
-        
-        with open(self.catfile, 'r') as f:
+
+        # 读synsetoffset2category.txt中的数据，并以字典的形式存储到self.cat中
+        with open(self.catfile, 'r') as f:  # 打开目录txt文件，'r':open for reading
             for line in f:
-                ls = line.strip().split()
+                # strip():移除字符串头尾指定的字符（默认为空格或换行符）
+                # split():指定分隔符对字符串进行切片，返回分割后的字符串列表(默认为所有的空字符，包括空格、换行\n、制表符\t等)
+                ls = line.strip().split() #ls的类型为list
+                # cat为字典，通过[键]索引。键：类别；值：文件夹名称
                 self.cat[ls[0]] = ls[1]
         #print(self.cat)
+        # 类别选择，对那些种类物体进行分类
         if not class_choice is None:
             self.cat = {k: v for k, v in self.cat.items() if k in class_choice}
 
-        self.id2cat = {v: k for k, v in self.cat.items()}
+        self.id2cat = {v: k for k, v in self.cat.items()}# key和value互换
 
         self.meta = {}
+        # json文件类似xml文件，可存储键值对和数组等
+        # split=train
+        # format()：字符串格式化函数，使用{}代替之前的%
         splitfile = os.path.join(self.root, 'train_test_split', 'shuffled_{}_file_list.json'.format(split))
         #from IPython import embed; embed()
         filelist = json.load(open(splitfile, 'r'))
+        # for item in self.cat：item为键
+        # for item in self.cat.values():item为值
+        # for item in self.cat.items():item为键值对（元组的形式）
+        # for k, v in self.cat.items():更为规范的键值对读取方式
+        # meta为字典，键为类别，键值为空
         for item in self.cat:
             self.meta[item] = []
 
+        # 读取shuffled_train_file_list.json
         for file in filelist:
-            _, category, uuid = file.split('/')
+            _, category, uuid = file.split('/')# category为某一类别所在文件夹，uuid为某一类别的某一个
+            # 分类：把每一类物体的路径分到每一类物体的后面，格式为{'Airplane':[('*.pts','*.seg'), ...]}
             if category in self.cat.values():
                 self.meta[self.id2cat[category]].append((os.path.join(self.root, category, 'points', uuid+'.pts'),
                                         os.path.join(self.root, category, 'points_label', uuid+'.seg')))
 
         self.datapath = []
+        # cat存储类别及其所在文件夹，item访问键，即类别
         for item in self.cat:
+            # meta为字典，fn访问值，即路径
             for fn in self.meta[item]:
+                # item为类别，fn[0]为点云路径，fn[1]为用于分割的标签路径
                 self.datapath.append((item, fn[0], fn[1]))
-
+        # sorted():对所有可迭代兑现进行排序，默认为升序；sorted(self.cat)对字典cat中的键（种类）进行排序,排序结果的类型为list
+        # zip():  函数用于将可迭代的对象作为参数，将对象中对应的元素打包成一个个元组
+        # dict(): 创建字典。dict(zip(['one', 'two'], [1, 2])) -> {'two': 2, 'one': 1}
+        # 下列操作实现了对类别进行数字编码表示
         self.classes = dict(zip(sorted(self.cat), range(len(self.cat))))
         print(self.classes)
+        # 读misc/num_seg_classes.txt中的数据
         with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), '../misc/num_seg_classes.txt'), 'r') as f:
             for line in f:
                 ls = line.strip().split()
                 self.seg_classes[ls[0]] = int(ls[1])
+        # 'Airplane'应该分成几类。num_seg_classes为对应的的类应该分成几类
         self.num_seg_classes = self.seg_classes[list(self.cat.keys())[0]]
         print(self.seg_classes, self.num_seg_classes)
 
+    # 该方法的实例对象可通过索引取值，自动调用该方法
     def __getitem__(self, index):
         fn = self.datapath[index]
         cls = self.classes[self.datapath[index][0]]
