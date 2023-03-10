@@ -1,5 +1,9 @@
 # 加上这句之后 即使在python2.X，使用print就得像python3.X那样加括号使用。python2.X中print不需要括号，而在python3.X中则需要。
 from __future__ import print_function
+
+import sys
+sys.path.append("../")
+
 import argparse  # 实现命令行中输入参数的传递
 import os
 import random
@@ -19,18 +23,21 @@ import torch.nn.functional as F
 # 展示进度条的模块
 from tqdm import tqdm
 
+
+
+
 # 使用argparse 的第一步是创建一个 ArgumentParser 对象
 parser = argparse.ArgumentParser()
 # 添加程序参数信息
 # 终端键入batchsize大小
 parser.add_argument(
-    '--batchSize', type=int, default=32, help='input batch size')
+    '--batchSize', type=int, default=4, help='input batch size')
 # 默认的数据集每个点云是2500个点
 parser.add_argument(
     '--num_points', type=int, default=2500, help='input batch size')
 # 加载数据的进程数目
 parser.add_argument(
-    '--workers', type=int, help='number of data loading workers', default=4)
+    '--workers', type=int, help='number of data loading workers', default=0)
 # epoch，训练多少轮 默认250
 parser.add_argument(
     '--nepoch', type=int, default=250, help='number of epochs to train for')
@@ -117,72 +124,75 @@ classifier = PointNetCls(k=num_classes, feature_transform=opt.feature_transform)
 if opt.model != '':
     classifier.load_state_dict(torch.load(opt.model))
 
-# 优化器：adam-Adaptive Moment Estimation(自适应矩估计)，利用梯度的一阶矩和二阶矩动态调整每个参数的学习率
-# betas：用于计算梯度一阶矩和二阶矩的系数
-optimizer = optim.Adam(classifier.parameters(), lr=0.001, betas=(0.9, 0.999))
-# 学习率调整：每个step_size次epoch后，学习率x0.5
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
-# 将所有的模型参数移到GPU中
-classifier.cuda()
+if __name__ == '__main__':
+    # 优化器：adam-Adaptive Moment Estimation(自适应矩估计)，利用梯度的一阶矩和二阶矩动态调整每个参数的学习率
+    # betas：用于计算梯度一阶矩和二阶矩的系数
+    optimizer = optim.Adam(classifier.parameters(), lr=0.001, betas=(0.9, 0.999))
+    # 学习率调整：每个step_size次epoch后，学习率x0.5
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
+    # 将所有的模型参数移到GPU中
+    classifier.cuda()
 
-# 计算batch的数量
-num_batch = len(dataset) / opt.batchSize
+    # 计算batch的数量
+    num_batch = len(dataset) / opt.batchSize
 
-# 开始一趟一趟的训练
-for epoch in range(opt.nepoch):
-    scheduler.step()
-    # 将一个可遍历对象组合为一个索引序列，同时列出数据和数据下标,(0, seq[0])...
-    # __init__(self, iterable, start=0)，参数为可遍历对象及起始位置
-    for i, data in enumerate(dataloader, 0):
-        points, target = data  # 读取待训练对象点云与标签
-        target = target[:, 0]  # 取所有行的第0列
-        points = points.transpose(2, 1)  # 改变点云的维度
-        points, target = points.cuda(), target.cuda()  # tensor转到cuda上
-        optimizer.zero_grad()  # 梯度清除，避免backward时梯度累加
-        classifier = classifier.train()# 训练模式，使能BN和dropout
-        pred, trans, trans_feat = classifier(points)  # 网络结果预测输出
-        # 损失函数：负log似然损失，在分类网络中使用了log_softmax，二者结合其实就是交叉熵损失函数
-        loss = F.nll_loss(pred, target)
-        # 对feature_transform中64X64的变换矩阵做正则化，满足AA^T=I
-        if opt.feature_transform:
-            loss += feature_transform_regularizer(trans_feat) * 0.001
-        loss.backward() # loss反向传播
-        optimizer.step() # 梯度下降，参数优化
-        pred_choice = pred.data.max(1)[1] # max(1)返回每一行中的最大值及索引,[1]取出索引（代表着类别）
-        correct = pred_choice.eq(target.data).cpu().sum() # 判断和target是否匹配，并计算匹配的数量
-        print('[%d: %d/%d] train loss: %f accuracy: %f' % (
-            epoch, i, num_batch, loss.item(), correct.item() / float(opt.batchSize)))
-
-        # 每10次batch之后，进行一次测试
-        if i % 10 == 0:
-            j, data = next(enumerate(testdataloader, 0))
-            points, target = data
-            target = target[:, 0]
-            points = points.transpose(2, 1)
-            points, target = points.cuda(), target.cuda()
-            classifier = classifier.eval()  # 测试模式，固定住BN和dropout
-            pred, _, _ = classifier(points)
+    # 开始一趟一趟的训练
+    for epoch in range(opt.nepoch):
+        # scheduler.step()
+        # 将一个可遍历对象组合为一个索引序列，同时列出数据和数据下标,(0, seq[0])...
+        # __init__(self, iterable, start=0)，参数为可遍历对象及起始位置
+        for i, data in enumerate(dataloader, 0):
+            points, target = data  # 读取待训练对象点云与标签
+            target = target[:, 0]  # 取所有行的第0列
+            points = points.transpose(2, 1)  # 改变点云的维度
+            points, target = points.cuda(), target.cuda()  # tensor转到cuda上
+            optimizer.zero_grad()  # 梯度清除，避免backward时梯度累加
+            classifier = classifier.train()  # 训练模式，使能BN和dropout
+            pred, trans, trans_feat = classifier(points)  # 网络结果预测输出
+            # 损失函数：负log似然损失，在分类网络中使用了log_softmax，二者结合其实就是交叉熵损失函数
             loss = F.nll_loss(pred, target)
-            pred_choice = pred.data.max(1)[1]
-            correct = pred_choice.eq(target.data).cpu().sum()
-            print('[%d: %d/%d] %s loss: %f accuracy: %f' % (
-                epoch, i, num_batch, blue('test'), loss.item(), correct.item() / float(opt.batchSize)))
-    # 保存权重文件在cls/cls_model_1.pth
-    torch.save(classifier.state_dict(), '%s/cls_model_%d.pth' % (opt.outf, epoch))
+            # 对feature_transform中64X64的变换矩阵做正则化，满足AA^T=I
+            if opt.feature_transform:
+                loss += feature_transform_regularizer(trans_feat) * 0.001
+            loss.backward()  # loss反向传播
+            optimizer.step()  # 梯度下降，参数优化
+            pred_choice = pred.data.max(1)[1]  # max(1)返回每一行中的最大值及索引,[1]取出索引（代表着类别）
+            correct = pred_choice.eq(target.data).cpu().sum()  # 判断和target是否匹配，并计算匹配的数量
+            print('[%d: %d/%d] train loss: %f accuracy: %f' % (
+                epoch, i, num_batch, loss.item(), correct.item() / float(opt.batchSize)))
 
-# 在测试集上验证模型的精度
-total_correct = 0
-total_testset = 0
-for i, data in tqdm(enumerate(testdataloader, 0)):
-    points, target = data
-    target = target[:, 0]
-    points = points.transpose(2, 1)
-    points, target = points.cuda(), target.cuda()
-    classifier = classifier.eval()
-    pred, _, _ = classifier(points)
-    pred_choice = pred.data.max(1)[1]
-    correct = pred_choice.eq(target.data).cpu().sum()
-    total_correct += correct.item()
-    total_testset += points.size()[0]
+            # 每10次batch之后，进行一次测试
+            if i % 10 == 0:
+                j, data = next(enumerate(testdataloader, 0))
+                points, target = data
+                target = target[:, 0]
+                points = points.transpose(2, 1)
+                points, target = points.cuda(), target.cuda()
+                classifier = classifier.eval()  # 测试模式，固定住BN和dropout
+                pred, _, _ = classifier(points)
+                loss = F.nll_loss(pred, target)
+                pred_choice = pred.data.max(1)[1]
+                correct = pred_choice.eq(target.data).cpu().sum()
+                print('[%d: %d/%d] %s loss: %f accuracy: %f' % (
+                    epoch, i, num_batch, blue('test'), loss.item(), correct.item() / float(opt.batchSize)))
 
-print("final accuracy {}".format(total_correct / float(total_testset)))
+        scheduler.step()
+        # 保存权重文件在cls/cls_model_1.pth
+        torch.save(classifier.state_dict(), '%s/cls_model_%d.pth' % (opt.outf, epoch))
+
+    # 在测试集上验证模型的精度
+    total_correct = 0
+    total_testset = 0
+    for i, data in tqdm(enumerate(testdataloader, 0)):
+        points, target = data
+        target = target[:, 0]
+        points = points.transpose(2, 1)
+        points, target = points.cuda(), target.cuda()
+        classifier = classifier.eval()
+        pred, _, _ = classifier(points)
+        pred_choice = pred.data.max(1)[1]
+        correct = pred_choice.eq(target.data).cpu().sum()
+        total_correct += correct.item()
+        total_testset += points.size()[0]
+
+    print("final accuracy {}".format(total_correct / float(total_testset)))
